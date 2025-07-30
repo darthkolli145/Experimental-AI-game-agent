@@ -147,32 +147,114 @@ class WhackAMoleAI:
         if screenshot is None:
             return False
         
-        # Look for green start button (you may need to adjust these values)
+        # Try multiple methods to find the start button
+        methods = [
+            self._detect_start_button_green,
+            self._detect_start_button_text,
+            self._detect_start_button_manual_assist
+        ]
+        
+        for method in methods:
+            if method(screenshot):
+                return True
+        
+        print("Could not find START GAME button with any method")
+        print("Please manually click START GAME in the game window")
+        input("Press Enter after you've started the game...")
+        return True
+    
+    def _detect_start_button_green(self, screenshot):
+        """Try to detect start button by green color"""
         hsv = cv2.cvtColor(screenshot, cv2.COLOR_BGR2HSV)
         
-        # Green color range for start button
-        green_lower = np.array([50, 100, 100])
-        green_upper = np.array([70, 255, 255])
+        # Try multiple green color ranges
+        green_ranges = [
+            ([50, 100, 100], [70, 255, 255]),   # Original range
+            ([40, 80, 80], [80, 255, 255]),     # Wider range
+            ([35, 50, 50], [85, 255, 255]),     # Even wider
+        ]
         
-        green_mask = cv2.inRange(hsv, green_lower, green_upper)
-        contours, _ = cv2.findContours(green_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        for green_lower, green_upper in green_ranges:
+            green_mask = cv2.inRange(hsv, np.array(green_lower), np.array(green_upper))
+            contours, _ = cv2.findContours(green_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            
+            for contour in contours:
+                area = cv2.contourArea(contour)
+                if 500 < area < 15000:  # Wider button size range
+                    x, y, w, h = cv2.boundingRect(contour)
+                    
+                    # Check aspect ratio (buttons are usually wider than tall)
+                    aspect_ratio = w / h
+                    if 1.5 < aspect_ratio < 5:  # Reasonable button proportions
+                        center_x = x + w // 2
+                        center_y = y + h // 2
+                        
+                        # Click the start button
+                        abs_x = self.game_window_region["left"] + center_x
+                        abs_y = self.game_window_region["top"] + center_y
+                        pyautogui.click(abs_x, abs_y)
+                        print(f"Clicked START GAME button (green detection) at ({abs_x}, {abs_y})")
+                        return True
+        return False
+    
+    def _detect_start_button_text(self, screenshot):
+        """Try to detect start button by looking for button-like rectangles"""
+        gray = cv2.cvtColor(screenshot, cv2.COLOR_BGR2GRAY)
+        
+        # Look for rectangular contours
+        edges = cv2.Canny(gray, 50, 150)
+        contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         
         for contour in contours:
             area = cv2.contourArea(contour)
-            if 1000 < area < 10000:  # Button size range
-                x, y, w, h = cv2.boundingRect(contour)
-                center_x = x + w // 2
-                center_y = y + h // 2
+            if 1000 < area < 20000:
+                # Approximate the contour
+                epsilon = 0.02 * cv2.arcLength(contour, True)
+                approx = cv2.approxPolyDP(contour, epsilon, True)
                 
-                # Click the start button
-                abs_x = self.game_window_region["left"] + center_x
-                abs_y = self.game_window_region["top"] + center_y
-                pyautogui.click(abs_x, abs_y)
-                print("Clicked START GAME button")
-                return True
-        
-        print("Could not find START GAME button")
+                # Look for rectangular shapes (4 corners)
+                if len(approx) == 4:
+                    x, y, w, h = cv2.boundingRect(contour)
+                    aspect_ratio = w / h
+                    
+                    # Check if it's in the lower part of screen (where buttons usually are)
+                    if (1.5 < aspect_ratio < 4 and 
+                        y > screenshot.shape[0] * 0.6):  # Lower 40% of screen
+                        
+                        center_x = x + w // 2
+                        center_y = y + h // 2
+                        
+                        abs_x = self.game_window_region["left"] + center_x
+                        abs_y = self.game_window_region["top"] + center_y
+                        pyautogui.click(abs_x, abs_y)
+                        print(f"Clicked START GAME button (shape detection) at ({abs_x}, {abs_y})")
+                        return True
         return False
+    
+    def _detect_start_button_manual_assist(self, screenshot):
+        """Show screenshot and let user point to start button"""
+        if not self.debug_mode:
+            return False
+            
+        print("Showing screenshot for manual button detection...")
+        cv2.imshow('Find START GAME Button - Click on it', screenshot)
+        print("Look at the screenshot, find the START GAME button")
+        print("Estimate its center coordinates and close the window")
+        cv2.waitKey(0)
+        cv2.destroyAllWindows()
+        
+        try:
+            x = int(input("Enter X coordinate of START GAME button center: "))
+            y = int(input("Enter Y coordinate of START GAME button center: "))
+            
+            abs_x = self.game_window_region["left"] + x
+            abs_y = self.game_window_region["top"] + y
+            pyautogui.click(abs_x, abs_y)
+            print(f"Clicked START GAME button (manual) at ({abs_x}, {abs_y})")
+            return True
+        except ValueError:
+            print("Invalid coordinates")
+            return False
     
     def play_game(self, duration=30):
         """
